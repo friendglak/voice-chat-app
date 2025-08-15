@@ -1,4 +1,5 @@
 import { ref, onUnmounted } from "vue";
+import { AUDIO_CONFIG } from "~/config/audio";
 
 export interface RecordingResult {
   blob: Blob;
@@ -7,7 +8,22 @@ export interface RecordingResult {
   waveform?: number[];
 }
 
-export const useAudioRecorder = () => {
+export interface RecordingConfig {
+  minDuration: number; // Duración mínima en segundos
+  maxDuration: number; // Duración máxima en segundos
+  minBlobSize: number; // Tamaño mínimo del blob en bytes
+}
+
+export const useAudioRecorder = (config: Partial<RecordingConfig> = {}) => {
+  // Configuración por defecto desde el archivo de configuración global
+  const defaultConfig: RecordingConfig = {
+    minDuration: AUDIO_CONFIG.recording.minDuration,
+    maxDuration: AUDIO_CONFIG.recording.maxDuration,
+    minBlobSize: AUDIO_CONFIG.recording.minBlobSize,
+  };
+
+  const recordingConfig = { ...defaultConfig, ...config };
+
   const isRecording = ref(false);
   const recordingTime = ref(0);
   const hasPermission = ref(false);
@@ -21,120 +37,172 @@ export const useAudioRecorder = () => {
   const audioChunks = ref<Blob[]>([]);
 
   const requestPermission = async (): Promise<boolean> => {
+    console.log("🔐 Requesting microphone permission...");
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: AUDIO_CONFIG.permissions.audioConstraints,
       });
 
+      console.log("✅ Microphone stream obtained:", stream);
       hasPermission.value = true;
       permissionError.value = "";
 
       // Setup audio context for analysis
+      console.log("🎵 Setting up AudioContext...");
       audioContext = new (window.AudioContext ||
         (window as any).webkitAudioContext)();
       analyser = audioContext.createAnalyser();
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
-      analyser.fftSize = 256;
+      analyser.fftSize = AUDIO_CONFIG.analysis.fftSize;
+      console.log("✅ AudioContext setup complete");
 
       return true;
     } catch (error) {
+      console.error("❌ Error accessing microphone:", error);
       hasPermission.value = false;
       permissionError.value =
         "Microphone access denied. Please allow microphone access to continue.";
-      console.error("Error accessing microphone:", error);
       return false;
     }
   };
 
   const startRecording = async (): Promise<void> => {
+    console.log("🎤 useAudioRecorder.startRecording called");
+    
     if (!hasPermission.value) {
+      console.log("🔐 No permission, requesting...");
       const permitted = await requestPermission();
-      if (!permitted) return;
+      if (!permitted) {
+        console.log("❌ Permission denied");
+        return;
+      }
+      console.log("✅ Permission granted");
     }
 
-    if (!stream) return;
+    if (!stream) {
+      console.log("❌ No audio stream available");
+      return;
+    }
 
+    console.log("🎵 Setting up MediaRecorder...");
     audioChunks.value = [];
 
-    mediaRecorder = new MediaRecorder(stream, {
-      mimeType: "audio/webm;codecs=opus",
-    });
+    try {
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: AUDIO_CONFIG.recording.mimeType,
+      });
 
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.value.push(event.data);
-      }
-    };
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.value.push(event.data);
+          console.log("📦 Audio chunk received, size:", event.data.size);
+        }
+      };
 
-    mediaRecorder.start();
-    isRecording.value = true;
-    recordingTime.value = 0;
+      mediaRecorder.onstart = () => {
+        console.log("🚀 MediaRecorder started successfully");
+      };
 
-    // Start recording timer
-    recordingTimer = setInterval(() => {
-      recordingTime.value++;
-      if (recordingTime.value >= 30) {
-        stopRecording();
-      }
-    }, 1000);
+      mediaRecorder.onerror = (event) => {
+        console.error("❌ MediaRecorder error:", event);
+      };
+
+      mediaRecorder.start();
+      isRecording.value = true;
+      recordingTime.value = 0;
+      console.log("✅ Recording state updated");
+
+      // Start recording timer
+      recordingTimer = setInterval(() => {
+        recordingTime.value++;
+        console.log("⏱️ Recording time:", recordingTime.value);
+        if (recordingTime.value >= recordingConfig.maxDuration) {
+          console.log("⏰ Max duration reached, stopping...");
+          stopRecording();
+        }
+      }, 1000);
+
+      console.log("✅ Recording started successfully");
+    } catch (error) {
+      console.error("❌ Error in startRecording:", error);
+      throw error;
+    }
   };
 
   const stopRecording = (): Promise<RecordingResult | null> => {
     return new Promise((resolve) => {
+      console.log("🛑 stopRecording called");
+      console.log("📊 MediaRecorder state:", mediaRecorder?.state);
+      console.log("📊 Recording time:", recordingTime.value);
+      console.log("📊 Audio chunks count:", audioChunks.value.length);
+      
       if (!mediaRecorder || mediaRecorder.state !== "recording") {
+        console.log("❌ MediaRecorder not in recording state");
         resolve(null);
         return;
       }
 
+      // Guardar la duración ANTES de resetear
+      const finalDuration = recordingTime.value;
+      console.log("💾 Final duration captured:", finalDuration, "seconds");
+
       mediaRecorder.onstop = async () => {
+        console.log("🔄 MediaRecorder stopped, processing audio...");
         const audioBlob = new Blob(audioChunks.value, { type: "audio/webm" });
+        console.log("📦 Audio blob created, size:", audioBlob.size, "bytes");
 
-        // Validate audio is not silent
-        const isValid = await validateAudio(audioBlob);
+        // Usar la duración guardada, NO recordingTime.value
+        const isValidDuration = finalDuration >= recordingConfig.minDuration;
+        const isValidSize = audioBlob.size >= recordingConfig.minBlobSize;
 
-        if (isValid) {
-          resolve({
+        console.log("✅ Validation results:");
+        console.log("  - Duration:", finalDuration, "s (min:", recordingConfig.minDuration, "s)");
+        console.log("  - Size:", audioBlob.size, "bytes (min:", recordingConfig.minBlobSize, "bytes)");
+        console.log("  - Duration valid:", isValidDuration);
+        console.log("  - Size valid:", isValidSize);
+
+        if (isValidDuration && isValidSize) {
+          console.log("✅ Audio validation passed, creating result");
+          const result = {
             blob: audioBlob,
-            duration: recordingTime.value,
+            duration: finalDuration, // Usar la duración guardada
             url: URL.createObjectURL(audioBlob),
             waveform: getWaveform(),
-          });
+          };
+          console.log("✅ Recording result created:", result);
+          
+          // Limpiar estado después de crear el resultado
+          cleanupRecordingState();
+          resolve(result);
         } else {
+          console.log("❌ Audio validation failed");
+          if (!isValidDuration) {
+            console.log("  - Duration too short:", finalDuration, "s <", recordingConfig.minDuration, "s");
+          }
+          if (!isValidSize) {
+            console.log("  - Size too small:", audioBlob.size, "bytes <", recordingConfig.minBlobSize, "bytes");
+          }
+          
+          // Limpiar estado después de la validación fallida
+          cleanupRecordingState();
           resolve(null);
         }
       };
 
+      console.log("🛑 Stopping MediaRecorder...");
       mediaRecorder.stop();
       isRecording.value = false;
 
+      // Limpiar timer y resetear estado DESPUÉS de la validación
       if (recordingTimer) {
         clearInterval(recordingTimer);
         recordingTimer = null;
       }
-      recordingTime.value = 0;
+      
+      // NO resetear recordingTime aquí, se hará después de la validación
+      console.log("⏱️ Timer cleaned up, waiting for MediaRecorder.onstop...");
     });
-  };
-
-  const validateAudio = async (blob: Blob): Promise<boolean> => {
-    // Basic validation - check if blob has content
-    if (blob.size < 1000) return false;
-
-    // Advanced validation using AudioContext
-    if (analyser) {
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteFrequencyData(dataArray);
-
-      // Check if there's any significant audio activity
-      const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-      return average > 10; // Threshold for silence
-    }
-
-    return true;
   };
 
   const getWaveform = (): number[] => {
@@ -144,7 +212,7 @@ export const useAudioRecorder = () => {
     analyser.getByteFrequencyData(dataArray);
 
     // Sample waveform data for visualization
-    const samples = 16;
+    const samples = AUDIO_CONFIG.analysis.waveformSamples;
     const blockSize = Math.floor(dataArray.length / samples);
     const waveform: number[] = [];
 
@@ -160,7 +228,7 @@ export const useAudioRecorder = () => {
     return waveform;
   };
 
-  const cleanup = () => {
+  const cleanupRecordingState = () => {
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
     }
@@ -170,10 +238,14 @@ export const useAudioRecorder = () => {
     if (recordingTimer) {
       clearInterval(recordingTimer);
     }
+    audioChunks.value = []; // Clear audio chunks after recording
+    mediaRecorder = null; // Reset mediaRecorder
+    recordingTime.value = 0; // Reset recording time
+    isRecording.value = false; // Reset recording state
   };
 
   onUnmounted(() => {
-    cleanup();
+    cleanupRecordingState(); // Ensure cleanup on component unmount
   });
 
   return {
@@ -185,6 +257,7 @@ export const useAudioRecorder = () => {
     stopRecording,
     getWaveform,
     requestPermission,
-    cleanup,
+    cleanup: cleanupRecordingState, // Expose the cleanup function
+    config: readonly(recordingConfig),
   };
 };

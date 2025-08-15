@@ -27,18 +27,39 @@ export const useBroadcastChannel = (channelName: string) => {
 
   const sendMessage = (message: VoiceMessage): void => {
     if (channel.value) {
+      // Solo enviar datos serializables, excluir Blob y URL
+      const serializableMessage = {
+        id: message.id,
+        sender: message.sender,
+        duration: message.duration,
+        timestamp: message.timestamp,
+        isPlaying: message.isPlaying,
+        playbackSpeed: message.playbackSpeed,
+        progress: message.progress,
+        waveform: message.waveform,
+        // No incluir audioBlob ni audioUrl
+      };
+
       channel.value.postMessage({
         type: "message",
-        payload: message,
+        payload: serializableMessage,
       });
     }
   };
 
   const announceUserJoined = (user: User): void => {
     if (channel.value) {
+      // Solo enviar datos básicos del usuario
+      const serializableUser = {
+        id: user.id,
+        nickname: user.nickname,
+        joinedAt: user.joinedAt,
+        // No incluir avatar si es un Blob o URL
+      };
+
       channel.value.postMessage({
         type: "user_joined",
-        user,
+        user: serializableUser,
       });
     }
   };

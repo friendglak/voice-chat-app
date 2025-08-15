@@ -270,7 +270,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from "vue";
+import { ref, watch, nextTick, onMounted } from "vue";
 import { useChat } from "~/composables/useChat";
 import { useSimulation } from "~/composables/useSimulation";
 import { useRecordingHandler } from "~/composables/useRecordingHandler";
@@ -294,6 +294,7 @@ const {
   clearMessages,
   scrollToBottom,
   getRandomStatus,
+  getBroadcastChannel,
 } = useChat();
 
 const { simulateOnlineUsers, simulateBotResponse } = useSimulation();
@@ -308,6 +309,11 @@ const {
 
 const { togglePlayback, setPlaybackSpeed } = useAudioPlayer();
 
+const enhancedSimulateBotResponse = (userId: string) => {
+  const channel = getBroadcastChannel();
+  simulateBotResponse(userId, channel);
+};
+
 const onLogin = (nickname: string, room: string) => {
   handleLogin(nickname, room);
   if (currentUser.value) {
@@ -319,7 +325,7 @@ const onStopRecording = async () => {
   await handleStopRecording(
     currentUser.value,
     addMessage,
-    simulateBotResponse,
+    enhancedSimulateBotResponse,
     scrollToBottom,
     messagesContainer.value
   );

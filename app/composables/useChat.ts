@@ -1,14 +1,15 @@
 import { ref, computed, onUnmounted, readonly } from "vue";
 import { useChatStore } from "~/stores/chat";
 import { useBroadcastChannel } from "~/composables/useBroadcastChannel";
-import type { User, VoiceMessage } from "~/types";
+import type { VoiceMessage } from "~/types";
 
 export const useChat = () => {
   const chatStore = useChatStore();
   const isLoggedIn = ref(false);
-  const broadcastChannel = ref<ReturnType<typeof useBroadcastChannel> | null>(null);
+  const broadcastChannelRef = ref<ReturnType<
+    typeof useBroadcastChannel
+  > | null>(null);
 
-  // Computed properties
   const currentUser = computed(() => chatStore.currentUser);
   const messages = computed(() => chatStore.messages);
   const onlineUsers = computed(() => chatStore.onlineUsers);
@@ -17,7 +18,6 @@ export const useChat = () => {
   const currentRoom = computed(() => chatStore.currentRoom);
   const userStats = computed(() => chatStore.userStats);
 
-  // Methods
   const handleLogin = (nickname: string, room: string) => {
     chatStore.selectedRoom = room;
     chatStore.login(nickname);
@@ -26,66 +26,96 @@ export const useChat = () => {
   };
 
   const handleLogout = () => {
-    if (currentUser.value && broadcastChannel.value) {
-      broadcastChannel.value.announceUserLeft(currentUser.value.id);
+    if (currentUser.value && broadcastChannelRef.value) {
+      broadcastChannelRef.value.announceUserLeft(currentUser.value.id);
     }
     chatStore.logout();
     isLoggedIn.value = false;
-    if (broadcastChannel.value) {
-      broadcastChannel.value.close();
+    if (broadcastChannelRef.value) {
+      broadcastChannelRef.value.close();
     }
   };
 
   const initializeChat = () => {
     if (!currentUser.value) return;
 
-    // Initialize broadcast channel
-    const channel = useBroadcastChannel(`voiceChat_${chatStore.selectedRoom}`);
-    broadcastChannel.value = channel;
+    const channelName = `voiceChat_${chatStore.selectedRoom}`;
 
-    // Initialize broadcast channel with message handler
+    const channel = useBroadcastChannel(channelName);
+    broadcastChannelRef.value = channel;
+
     channel.initialize((data) => {
       if (data.type === "message" && data.payload) {
         const message = data.payload;
         if (message.sender.id !== currentUser.value?.id) {
-          chatStore.addMessage(message);
+          // Reconstruir el mensaje con la estructura completa
+          const reconstructedMessage: VoiceMessage = {
+            id: message.id,
+            sender: message.sender,
+            audioUrl: undefined, // Los mensajes recibidos no tienen audio
+            audioBlob: undefined,
+            duration: message.duration,
+            timestamp: message.timestamp,
+            isPlaying: false,
+            playbackSpeed: 1,
+            progress: 0,
+            waveform: message.waveform,
+          };
+          chatStore.addMessage(reconstructedMessage);
         }
       } else if (data.type === "user_joined" && data.user) {
-        chatStore.addOnlineUser(data.user);
+        if (data.user.id !== currentUser.value?.id) {
+          chatStore.addOnlineUser(data.user);
+        }
       } else if (data.type === "user_left" && data.userId) {
         chatStore.removeOnlineUser(data.userId);
       }
     });
 
-    // Announce current user joined
     channel.announceUserJoined(currentUser.value);
 
-    // Load stored messages
     chatStore.loadStoredMessages();
   };
 
   const handleRoomChange = (roomId: string) => {
-    // Leave current room
-    if (currentUser.value && broadcastChannel.value) {
-      broadcastChannel.value.announceUserLeft(currentUser.value.id);
+    if (currentUser.value && broadcastChannelRef.value) {
+      broadcastChannelRef.value.announceUserLeft(currentUser.value.id);
     }
-    if (broadcastChannel.value) {
-      broadcastChannel.value.close();
+    if (broadcastChannelRef.value) {
+      broadcastChannelRef.value.close();
     }
 
-    // Change room
     chatStore.changeRoom(roomId);
 
-    // Reinitialize with new room
     initializeChat();
   };
 
   const addMessage = (message: VoiceMessage) => {
     chatStore.addMessage(message);
-    if (broadcastChannel.value) {
-      broadcastChannel.value.sendMessage(message);
+
+    if (broadcastChannelRef.value) {
+      // Crear una copia del mensaje sin datos no serializables
+      const messageToSend = {
+        id: message.id,
+        sender: {
+          id: message.sender.id,
+          nickname: message.sender.nickname,
+          joinedAt: message.sender.joinedAt,
+        },
+        duration: message.duration,
+        timestamp: message.timestamp,
+        isPlaying: message.isPlaying,
+        playbackSpeed: message.playbackSpeed,
+        progress: message.progress,
+        waveform: message.waveform,
+        // No incluir audioBlob ni audioUrl
+      };
+      
+      broadcastChannelRef.value.sendMessage(messageToSend);
     }
   };
+
+  const getBroadcastChannel = () => broadcastChannelRef.value;
 
   const clearMessages = () => {
     if (confirm("Are you sure you want to clear all messages in this room?")) {
@@ -95,7 +125,9 @@ export const useChat = () => {
 
   const scrollToBottom = (messagesContainer: HTMLElement | undefined) => {
     if (messagesContainer) {
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      setTimeout(() => {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }, 50);
     }
   };
 
@@ -117,21 +149,18 @@ export const useChat = () => {
     return statuses[Math.floor(Math.random() * statuses.length)] || "Active";
   };
 
-  // Lifecycle cleanup
   onUnmounted(() => {
-    if (currentUser.value && broadcastChannel.value) {
-      broadcastChannel.value.announceUserLeft(currentUser.value.id);
+    if (currentUser.value && broadcastChannelRef.value) {
+      broadcastChannelRef.value.announceUserLeft(currentUser.value.id);
     }
-    if (broadcastChannel.value) {
-      broadcastChannel.value.close();
+    if (broadcastChannelRef.value) {
+      broadcastChannelRef.value.close();
     }
   });
 
   return {
-    // State
     isLoggedIn: readonly(isLoggedIn),
-    
-    // Computed
+
     currentUser,
     messages,
     onlineUsers,
@@ -139,8 +168,7 @@ export const useChat = () => {
     rooms,
     currentRoom,
     userStats,
-    
-    // Methods
+
     handleLogin,
     handleLogout,
     handleRoomChange,
@@ -149,5 +177,6 @@ export const useChat = () => {
     scrollToBottom,
     formatTotalDuration,
     getRandomStatus,
+    getBroadcastChannel,
   };
 };

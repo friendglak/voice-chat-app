@@ -1,8 +1,21 @@
 import { useAudioRecorder } from "~/composables/useAudioRecorder";
+import { AUDIO_CONFIG } from "~/config/audio";
 import type { VoiceMessage, User } from "~/types";
 
 export const useRecordingHandler = () => {
-  const audioRecorder = useAudioRecorder();
+  const audioRecorder = useAudioRecorder({
+    minDuration: AUDIO_CONFIG.recording.minDuration,
+    maxDuration: AUDIO_CONFIG.recording.maxDuration,
+    minBlobSize: AUDIO_CONFIG.recording.minBlobSize,
+  });
+
+  const startRecording = async (): Promise<void> => {
+    try {
+      await audioRecorder.startRecording();
+    } catch (error) {
+      console.error("❌ Error starting recording:", error);
+    }
+  };
 
   const handleStopRecording = async (
     currentUser: User | null,
@@ -11,30 +24,44 @@ export const useRecordingHandler = () => {
     scrollToBottom: (container: HTMLElement | undefined) => void,
     messagesContainer: HTMLElement | undefined
   ) => {
-    const result = await audioRecorder.stopRecording();
+    try {
+      const result = await audioRecorder.stopRecording();
 
-    if (result && currentUser) {
-      const message: VoiceMessage = {
-        id: Date.now().toString(),
-        sender: currentUser,
-        audioUrl: result.url,
-        duration: result.duration,
-        timestamp: Date.now(),
-        isPlaying: false,
-        playbackSpeed: 1,
-        progress: 0,
-        waveform: result.waveform,
-      };
+      if (result && currentUser) {
+        const message: VoiceMessage = {
+          id: Date.now().toString(),
+          sender: currentUser,
+          audioUrl: result.url,
+          duration: result.duration,
+          timestamp: Date.now(),
+          isPlaying: false,
+          playbackSpeed: AUDIO_CONFIG.playback.defaultSpeed,
+          progress: 0,
+          waveform: result.waveform,
+        };
 
-      addMessage(message);
+        addMessage(message);
 
-      // Simulate bot response after a delay
-      setTimeout(() => simulateBotResponse(currentUser.id), 2000 + Math.random() * 3000);
+        setTimeout(
+          () => simulateBotResponse(currentUser.id),
+          2000 + Math.random() * 3000
+        );
 
-      scrollToBottom(messagesContainer);
-    } else if (!result) {
-      // Show error message if recording failed
-      alert("Recording was too short or silent. Please try again.");
+        scrollToBottom(messagesContainer);
+      } else if (!result) {
+        console.log("❌ Recording completed but no valid audio data");
+      }
+    } catch (error) {
+      console.error("❌ Error stopping recording:", error);
+      if (error instanceof Error) {
+        console.log("🔍 Error details:", {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        });
+      } else {
+        console.log("🔍 Unknown error type:", typeof error);
+      }
     }
   };
 
@@ -42,7 +69,8 @@ export const useRecordingHandler = () => {
     isRecording: audioRecorder.isRecording,
     recordingTime: audioRecorder.recordingTime,
     permissionError: audioRecorder.permissionError,
-    startRecording: audioRecorder.startRecording,
+    startRecording,
     handleStopRecording,
+    config: audioRecorder.config,
   };
 };

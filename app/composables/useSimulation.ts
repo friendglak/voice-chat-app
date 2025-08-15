@@ -13,12 +13,11 @@ export const useSimulation = () => {
       { id: "5", nickname: "Carlos Rodriguez", joinedAt: Date.now() },
     ];
 
-    // Reset online users with current user
-    chatStore.onlineUsers = [
-      { id: currentUserId, nickname: "You", joinedAt: Date.now() },
-    ];
+    const currentUserObj = chatStore.currentUser;
+    if (currentUserObj) {
+      chatStore.onlineUsers = [currentUserObj];
+    }
 
-    // Add random number of mock users (1-3)
     const randomCount = Math.floor(Math.random() * 3) + 1;
     const shuffled = mockUsers.sort(() => Math.random() - 0.5);
     shuffled.slice(0, randomCount).forEach((user) => {
@@ -26,7 +25,10 @@ export const useSimulation = () => {
     });
   };
 
-  const simulateBotResponse = (currentUserId: string) => {
+  const simulateBotResponse = (
+    currentUserId: string,
+    broadcastChannel?: any
+  ) => {
     const botNames = [
       "AI Assistant",
       "Language Bot",
@@ -56,6 +58,10 @@ export const useSimulation = () => {
     };
 
     chatStore.addMessage(message);
+
+    if (broadcastChannel) {
+      broadcastChannel.sendMessage(message);
+    }
   };
 
   return {
